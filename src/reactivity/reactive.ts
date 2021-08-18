@@ -8,6 +8,7 @@ import {
   hasOwn,
   noopFn,
   isObject,
+  proxy,
 } from '../utils'
 import { isComponentInstance, defineComponentInstance } from '../utils/helper'
 import { RefKey } from '../utils/symbols'
@@ -16,13 +17,19 @@ import { rawSet, accessModifiedSet } from '../utils/sets'
 
 export function isRaw(obj: any): boolean {
   return Boolean(
-    obj?.__ob__ && typeof obj.__ob__ === 'object' && obj.__ob__?.__raw__
+    obj &&
+      hasOwn(obj, '__ob__') &&
+      typeof obj.__ob__ === 'object' &&
+      obj.__ob__?.__raw__
   )
 }
 
 export function isReactive(obj: any): boolean {
   return Boolean(
-    obj?.__ob__ && typeof obj.__ob__ === 'object' && !obj.__ob__?.__raw__
+    obj &&
+      hasOwn(obj, '__ob__') &&
+      typeof obj.__ob__ === 'object' &&
+      !obj.__ob__?.__raw__
   )
 }
 
@@ -34,7 +41,7 @@ function setupAccessControl(target: AnyObject): void {
   if (
     !isPlainObject(target) ||
     isRaw(target) ||
-    Array.isArray(target) ||
+    isArray(target) ||
     isRef(target) ||
     isComponentInstance(target) ||
     accessModifiedSet.has(target)
@@ -74,9 +81,7 @@ export function defineAccessControl(target: AnyObject, key: any, val?: any) {
   }
 
   setupAccessControl(val)
-  Object.defineProperty(target, key, {
-    enumerable: true,
-    configurable: true,
+  proxy(target, key, {
     get: function getterHandler() {
       const value = getter ? getter.call(target) : val
       // if the key is equal to RefKey, skip the unwrap logic
@@ -86,17 +91,17 @@ export function defineAccessControl(target: AnyObject, key: any, val?: any) {
         return value
       }
     },
-    set: function setterHandler(newVal) {
+    set: function setterHandler(newVal: any) {
       if (getter && !setter) return
 
-      const value = getter ? getter.call(target) : val
       // If the key is equal to RefKey, skip the unwrap logic
       // If and only if "value" is ref and "newVal" is not a ref,
       // the assignment should be proxied to "value" ref.
-      if (key !== RefKey && isRef(value) && !isRef(newVal)) {
-        value.value = newVal
+      if (key !== RefKey && isRef(val) && !isRef(newVal)) {
+        val.value = newVal
       } else if (setter) {
         setter.call(target, newVal)
+        val = newVal
       } else {
         val = newVal
       }
@@ -121,14 +126,32 @@ export function observe<T>(obj: T): T {
 
   // in SSR, there is no __ob__. Mock for reactivity check
   if (!hasOwn(observed, '__ob__')) {
-    def(observed, '__ob__', mockObserver(observed))
+    mockReactivityDeep(observed)
   }
 
   return observed
 }
 
-export function createObserver() {
-  return observe<any>({}).__ob__
+/**
+ * Mock __ob__ for object recursively
+ */
+function mockReactivityDeep(obj: any, seen = new Set()) {
+  if (seen.has(obj)) return
+
+  def(obj, '__ob__', mockObserver(obj))
+  seen.add(obj)
+
+  for (const key of Object.keys(obj)) {
+    const value = obj[key]
+    if (
+      !(isPlainObject(value) || isArray(value)) ||
+      isRaw(value) ||
+      !Object.isExtensible(value)
+    ) {
+      continue
+    }
+    mockReactivityDeep(value, seen)
+  }
 }
 
 function mockObserver(value: any = {}): any {
@@ -143,13 +166,17 @@ function mockObserver(value: any = {}): any {
   }
 }
 
+export function createObserver() {
+  return observe<any>({}).__ob__
+}
+
 export function shallowReactive<T extends object = any>(obj: T): T
-export function shallowReactive(obj: any): any {
+export function shallowReactive(obj: any) {
   if (!isObject(obj)) {
     if (__DEV__) {
-      warn('"shallowReactive()" is called without provide an "object".')
+      warn('"shallowReactive()" must be called on an object.')
     }
-    return obj as any
+    return obj
   }
 
   if (
@@ -157,7 +184,7 @@ export function shallowReactive(obj: any): any {
     isRaw(obj) ||
     !Object.isExtensible(obj)
   ) {
-    return obj as any
+    return obj
   }
 
   const observed = observe(isArray(obj) ? [] : {})
@@ -178,15 +205,13 @@ export function shallowReactive(obj: any): any {
       setter = property.set
     }
 
-    Object.defineProperty(observed, key, {
-      enumerable: true,
-      configurable: true,
+    proxy(observed, key, {
       get: function getterHandler() {
         const value = getter ? getter.call(obj) : val
         ob.dep?.depend()
         return value
       },
-      set: function setterHandler(newVal) {
+      set: function setterHandler(newVal: any) {
         if (getter && !setter) return
         if (setter) {
           setter.call(obj, newVal)
@@ -206,9 +231,9 @@ export function shallowReactive(obj: any): any {
 export function reactive<T extends object>(obj: T): UnwrapRef<T> {
   if (!isObject(obj)) {
     if (__DEV__) {
-      warn('"reactive()" is called without provide an "object".')
+      warn('"reactive()" must be called on an object.')
     }
-    return obj as any
+    return obj
   }
 
   if (

@@ -1,5 +1,5 @@
-import { reactive, Ref, UnwrapRef } from '.'
-import { isArray, isPlainObject, warn } from '../utils'
+import { reactive, Ref, UnwrapRefSimple } from '.'
+import { isArray, isPlainObject, isObject, warn, proxy } from '../utils'
 import { readonlySet } from '../utils/sets'
 import { isReactive, observe } from './reactive'
 import { isRef, RefImpl } from './ref'
@@ -33,7 +33,7 @@ export type DeepReadonly<T> = T extends Builtin
                   : Readonly<T>
 
 // only unwrap nested ref
-type UnwrapNestedRefs<T> = T extends Ref ? T : UnwrapRef<T>
+export type UnwrapNestedRefs<T> = T extends Ref ? T : UnwrapRefSimple<T>
 
 /**
  * **In @vue/composition-api, `reactive` only provides type-level readonly check**
@@ -44,11 +44,21 @@ type UnwrapNestedRefs<T> = T extends Ref ? T : UnwrapRef<T>
 export function readonly<T extends object>(
   target: T
 ): DeepReadonly<UnwrapNestedRefs<T>> {
+  if (__DEV__ && !isObject(target)) {
+    warn(`value cannot be made reactive: ${String(target)}`)
+  }
   return target as any
 }
 
 export function shallowReadonly<T extends object>(obj: T): Readonly<T>
 export function shallowReadonly(obj: any): any {
+  if (!isObject(obj)) {
+    if (__DEV__) {
+      warn(`value cannot be made reactive: ${String(obj)}`)
+    }
+    return obj
+  }
+
   if (
     !(isPlainObject(obj) || isArray(obj)) ||
     (!Object.isExtensible(obj) && !isRef(obj))
@@ -75,15 +85,13 @@ export function shallowReadonly(obj: any): any {
       getter = property.get
     }
 
-    Object.defineProperty(readonlyObj, key, {
-      enumerable: true,
-      configurable: true,
+    proxy(readonlyObj, key, {
       get: function getterHandler() {
         const value = getter ? getter.call(obj) : val
         ob.dep.depend()
         return value
       },
-      set(v) {
+      set(v: any) {
         if (__DEV__) {
           warn(`Set operation on key "${key}" failed: target is readonly.`)
         }

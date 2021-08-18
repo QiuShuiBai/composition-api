@@ -11,10 +11,14 @@ import {
   isRef,
   set,
   shallowRef,
+  getCurrentInstance,
+  nextTick,
 } from '../../src'
 import { createRenderer } from 'vue-server-renderer'
+import { mockWarn } from '../helpers'
 
 describe('SSR Reactive', () => {
+  mockWarn(true)
   beforeEach(() => {
     process.env.VUE_ENV = 'server'
   })
@@ -101,5 +105,44 @@ describe('SSR Reactive', () => {
       old: false,
       new: true,
     })
+  })
+
+  // #721
+  it('should behave correctly for the nested ref in the object', () => {
+    const state = { old: ref(false) }
+    set(state, 'new', ref(true))
+    expect(JSON.stringify(state)).toBe(
+      '{"old":{"value":false},"new":{"value":true}}'
+    )
+  })
+
+  // #721
+  it('should behave correctly for ref of object', () => {
+    const state = ref({ old: ref(false) })
+    set(state.value, 'new', ref(true))
+    expect(JSON.stringify(state.value)).toBe('{"old":false,"new":true}')
+  })
+
+  // test the input parameter of mockReactivityDeep
+  it('ssr should not RangeError: Maximum call stack size exceeded', async () => {
+    new Vue({
+      setup() {
+        // @ts-expect-error
+        const app = getCurrentInstance().proxy
+        let mockNt: any = []
+        mockNt.__ob__ = {}
+        const test = reactive({
+          app,
+          mockNt,
+        })
+        return {
+          test,
+        }
+      },
+    })
+    await nextTick()
+    expect(
+      `"RangeError: Maximum call stack size exceeded"`
+    ).not.toHaveBeenWarned()
   })
 })
