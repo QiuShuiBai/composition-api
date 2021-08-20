@@ -136,8 +136,6 @@ export function mixin(Vue: VueConstructor) {
               // NOTE we should try to avoid this, better implementation needed
               customReactive(bindingValue)
             }
-          } else if (isArray(bindingValue)) {
-            bindingValue = ref(bindingValue)
           }
         }
         asVmProperty(vm, name, bindingValue)
